@@ -1,40 +1,74 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// scalastyle:off println
 package com.examples
 
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkContext._
+import kafka.serializer.StringDecoder
+
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.kafka._
 import org.apache.spark.SparkConf
-import org.apache.log4j.Logger
 
-object MainExample {
-
-  def main(arg: Array[String]) {
-
-    var logger = Logger.getLogger(this.getClass())
-
-    if (arg.length < 2) {
-      logger.error("=> wrong parameters number")
-      System.err.println("Usage: MainExample <path-to-files> <output-path>")
+/**
+ * Consumes messages from one or more topics in Kafka and does wordcount.
+ * Usage: DirectKafkaWordCount <brokers> <topics>
+ *   <brokers> is a list of one or more Kafka brokers
+ *   <topics> is a list of one or more kafka topics to consume from
+ *
+ * Example:
+ *    $ bin/run-example streaming.DirectKafkaWordCount broker1-host:port,broker2-host:port \
+ *    topic1,topic2
+ */
+object DirectKafkaWordCount {
+  def main(args: Array[String]) {
+    if (args.length < 2) {
+      System.err.println(s"""
+        |Usage: DirectKafkaWordCount <brokers> <topics>
+        |  <brokers> is a list of one or more Kafka brokers
+        |  <topics> is a list of one or more kafka topics to consume from
+        |
+        """.stripMargin)
       System.exit(1)
     }
 
-    val jobName = "MainExample"
+    //StreamingExamples.setStreamingLogLevels()
 
-    val conf = new SparkConf().setAppName(jobName)
-    val sc = new SparkContext(conf)
+    val Array(brokers, topics) = args
 
-    val pathToFiles = arg(0)
-    val outputPath = arg(1)
+    // Create context with 2 second batch interval
+    val sparkConf = new SparkConf().setAppName("DirectKafkaWordCount")
+    val ssc = new StreamingContext(sparkConf, Seconds(2))
 
-    logger.info("=> jobName \"" + jobName + "\"")
-    logger.info("=> pathToFiles \"" + pathToFiles + "\"")
+    // Create direct kafka stream with brokers and topics
+    val topicsSet = topics.split(",").toSet
+    val kafkaParams = Map[String, String]("metadata.broker.list" -> brokers)
+    val messages = KafkaUtils.createDirectStream[String, String, StringDecoder, StringDecoder](
+      ssc, kafkaParams, topicsSet)
 
-    val files = sc.textFile(pathToFiles)
+    // Get the lines, split them into words, count the words and print
+    val lines = messages.map(_._2)
+    val words = lines.flatMap(_.split(" "))
+    val wordCounts = words.map(x => (x, 1L)).reduceByKey(_ + _)
+    wordCounts.print()
 
-    // do your work here
-    val rowsWithoutSpaces = files.map(_.replaceAll(" ", ","))
-
-    // and save the result
-    rowsWithoutSpaces.saveAsTextFile(outputPath)
-
+    // Start the computation
+    ssc.start()
+    ssc.awaitTermination()
   }
 }
+// scalastyle:on println
